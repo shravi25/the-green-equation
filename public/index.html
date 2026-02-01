@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>QR Scanner</title>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+    #scanner-container { width: 100%; max-width: 400px; margin: 0 auto; position: relative; }
+    #video { width: 100%; height: auto; }
+    #canvas { display: none; } /* Hidden, used for processing */
+    #result { margin: 10px 0; font-size: 18px; }
+    #coupon-display { margin-top: 20px; display: none; }
+    button { padding: 10px 20px; font-size: 16px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Scan QR Code</h1>
+  <div id="scanner-container">
+    <video id="video" autoplay playsinline></video> <!-- playsinline for iOS -->
+    <canvas id="canvas"></canvas>
+  </div>
+  <div id="result">Initializing camera...</div>
+  <div id="coupon-display">
+    Your Coupon: <span id="coupon-code"></span>
+    <button id="redeem-btn">Redeem Coupon</button>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const resultDiv = document.getElementById('result');
+    const couponDisplay = document.getElementById('coupon-display');
+    const couponCodeSpan = document.getElementById('coupon-code');
+    const ctx = canvas.getContext('2d');
+    let scanning = false;
+
+    // Access camera
+    navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment' } // Back camera on mobile
+    }).then(stream => {
+      video.srcObject = stream;
+      video.play();
+      resultDiv.textContent = 'Camera ready. Point at a QR code.';
+      requestAnimationFrame(scan);
+    }).catch(err => {
+      console.error('Camera access error:', err);
+      resultDiv.textContent = 'Camera access failed. Check permissions and try again.';
+    });
+
+    // Scanning function
+    function scan() {
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+        if (code && !scanning) {
+          scanning = true; // Prevent multiple detections
+          console.log('QR detected:', code.data);
+          resultDiv.textContent = 'Processing...';
+          fetch('/api/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ payload: code.data })
+          })
+          .then(res => res.json())
+          .then(data => {
+            console.log('API response:', data);
+            if (data.success) {
+              couponDisplay.style.display = 'block';
+              couponCodeSpan.textContent = data.coupon;
+              resultDiv.textContent = 'Scan successful!';
+            } else {
+              resultDiv.textContent = data.message;
+            }
+            setTimeout(() => { scanning = false; }, 2000); // Reset after 2s
+          })
+          .catch(err => {
+            console.error('Fetch error:', err);
+            resultDiv.textContent = 'Error processing scan.';
+            setTimeout(() => { scanning = false; }, 2000);
+          });
+        }
+      }
+      requestAnimationFrame(scan);
+    }
+
+    // Redeem button handler
+    document.getElementById('redeem-btn').addEventListener('click', () => {
+      const code = couponCodeSpan.textContent;
+      fetch('/api/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coupon_code: code })
+      })
+      .then(res => res.json())
+      .then(data => {
+        alert(data.message);
+        if (data.success) {
+          couponDisplay.style.display = 'none';
+        }
+      });
+    });
+  </script>
+</body>
+</html>
